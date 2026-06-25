@@ -1,0 +1,60 @@
+{# Global live-activity bar: progress bar + counts + throughput + ETA, so a
+   running migration always shows how far along it is and when it will finish. #}
+{% macro humansize(n) %}
+  {%- if n >= 1073741824 -%}{{ (n / 1073741824) | round(2) }} GiB
+  {%- elif n >= 1048576 -%}{{ (n / 1048576) | round(1) }} MiB
+  {%- else -%}{{ (n / 1024) | round(0) }} KiB{%- endif -%}
+{% endmacro %}
+{% macro eta(s) %}
+  {%- if s is none -%}—
+  {%- elif s >= 3600 -%}{{ (s // 3600) }}h {{ ((s % 3600) // 60) }}m
+  {%- elif s >= 60 -%}{{ (s // 60) }}m {{ (s % 60) }}s
+  {%- else -%}{{ s }}s{%- endif -%}
+{% endmacro %}
+{% if a.active %}
+  <div style="width:100%">
+    <div class="row between" style="font-size:13px; margin-bottom:6px">
+      <span class="row" style="gap:8px">
+        <span class="badge on"><span class="dot"></span>
+          {% if a.scanning %}scanning Dropbox…{% else %}migrating{% endif %}</span>
+        {% if a.paused %}<span class="badge" style="color:var(--warn)">paused</span>{% endif %}
+        {% if not a.scanning %}
+          <span class="muted">
+            {{ "{:,}".format(a.done_files) }} / {{ "{:,}".format(a.total_files) }} files
+            · {{ humansize(a.done_bytes) }} / {{ humansize(a.total_bytes) }}
+          </span>
+        {% endif %}
+      </span>
+      {% if not a.scanning %}
+        <span class="muted">
+          {{ a.pct }}%
+          {% if a.rate_bps %}· {{ humansize(a.rate_bps) }}/s{% endif %}
+          {% if a.eta_seconds is not none %}· ~{{ eta(a.eta_seconds) }} left{% endif %}
+        </span>
+      {% endif %}
+    </div>
+    {% if not a.scanning %}
+      <div class="meter"><span style="width: {{ a.pct }}%"></span></div>
+      <div class="row" style="gap:12px; margin-top:6px; font-size:12px" class="muted">
+        <span class="muted">
+          {% if a.downloading %}↓ {{ a.downloading }} downloading · {% endif %}
+          {% if a.uploading %}↑ {{ a.uploading }} uploading · {% endif %}
+          {% if a.verifying %}✓ {{ a.verifying }} verifying · {% endif %}
+          {{ "{:,}".format(a.queued) }} queued
+          {% if a.failed %}· <span style="color:var(--warn)">{{ a.failed }} retrying</span>{% endif %}
+          {% if a.dead %}· <span style="color:var(--err)">{{ a.dead }} failed</span>{% endif %}
+        </span>
+      </div>
+    {% endif %}
+  </div>
+{% else %}
+  <div class="row between" style="width:100%">
+    <span class="row" style="gap:10px">
+      <span class="badge"><span class="dot" style="color:var(--muted)"></span> idle</span>
+      <span class="muted" style="font-size:13px">
+        {% if a.done_files %}✓ {{ "{:,}".format(a.done_files) }} files copied &amp; verified on Drive{% else %}no active transfers{% endif %}
+      </span>
+    </span>
+    {% if a.dead %}<span class="muted" style="font-size:13px; color:var(--err)">{{ a.dead }} file(s) failed — see batch details</span>{% endif %}
+  </div>
+{% endif %}

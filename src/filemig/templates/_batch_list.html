@@ -1,0 +1,90 @@
+{% if notice %}
+  <div class="note {{ 'warn-note' if notice.kind == 'warn' else '' }}"
+       style="margin-bottom:14px; {% if notice.kind == 'ok' %}border-color: color-mix(in srgb, var(--ok) 40%, transparent); color: var(--ok);{% endif %}">
+    {{ notice.text }}
+  </div>
+{% endif %}
+{% if quota %}
+  {% set gib = 1073741824 %}
+  <div style="margin-bottom:16px">
+    <div class="row between" style="font-size:13px">
+      <span class="muted">Today's upload quota (rolling 24h)</span>
+      <span class="muted">{{ (quota.used_24h_bytes / gib) | round(1) }} / {{ (quota.effective_cap_bytes / gib) | round(0) }} GiB</span>
+    </div>
+    <div class="meter" style="margin-top:6px">
+      <span style="width: {{ ((quota.used_24h_bytes / quota.effective_cap_bytes) * 100) | round(1) if quota.effective_cap_bytes else 0 }}%"></span>
+    </div>
+    {% if quota.remaining_bytes <= 0 %}
+      <p class="note warn-note" style="margin-top:8px">Daily quota window full — proposing/uploading pauses until it rolls.</p>
+    {% endif %}
+  </div>
+  <div class="row" style="margin-bottom:14px">
+    {% if is_paused %}
+      <form hx-post="/control/resume" hx-target="#batches" hx-swap="innerHTML"><button class="btn ok">Resume workers</button></form>
+    {% else %}
+      <form hx-post="/control/pause" hx-target="#batches" hx-swap="innerHTML"><button class="btn secondary">Pause workers</button></form>
+    {% endif %}
+  </div>
+{% endif %}
+
+{% if not batches %}
+  <p class="muted">No batches yet. Propose a batch to begin migrating, folder by folder.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>#</th><th>State</th><th class="num">Files</th><th class="num">Size</th>
+      <th class="num">Copied</th><th class="num">Verified</th><th class="num">Failed</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for b in batches %}
+    <tr>
+      <td>{{ b.seq }}</td>
+      {# Copy-only build: 'awaiting_delete_approval' means copied + verified and
+         is the terminal success state. We relabel it accordingly. #}
+      <td>
+        {% if b.state == 'awaiting_delete_approval' %}
+          <span class="state verified">✓ copied &amp; verified</span>
+        {% else %}
+          <span class="state {{ b.state }}">{{ b.state }}</span>
+        {% endif %}
+      </td>
+      <td class="num">{{ b.file_count }}</td>
+      <td class="num">{{ (b.total_bytes / 1073741824) | round(1) }} GiB</td>
+      <td class="num">{{ b.copied_count }}</td>
+      <td class="num">{{ b.verified_count }}</td>
+      <td class="num">{{ b.failed_count }}</td>
+      <td>
+        <div class="row" style="gap:6px; justify-content:flex-end">
+          {% if b.state == 'proposed' %}
+            <form hx-post="/batches/{{ b.id }}/approve-copy" hx-target="#batches"
+                  hx-swap="innerHTML" hx-disabled-elt="find button"
+                  hx-on::before-request="this.querySelector('button').textContent='Starting…'">
+              <button class="btn">Go — copy &amp; verify</button></form>
+            <form hx-post="/batches/{{ b.id }}/cancel" hx-target="#batches" hx-swap="innerHTML">
+              <button class="btn secondary">Cancel</button></form>
+          {% elif b.state == 'running' %}
+            <span class="badge on"><span class="dot"></span> copying &amp; verifying…</span>
+          {% elif b.state == 'awaiting_delete_approval' %}
+            {% if b.verified_count < b.file_count %}
+              {# Some files failed or never finished — offer a retry. #}
+              <form hx-post="/batches/{{ b.id }}/resume" hx-target="#batches"
+                    hx-swap="innerHTML" hx-disabled-elt="find button"
+                    hx-on::before-request="this.querySelector('button').textContent='Resuming…'">
+                <button class="btn">↻ Resume ({{ b.file_count - b.verified_count }} left)</button></form>
+            {% endif %}
+            <button class="btn secondary" hx-get="/batches/{{ b.id }}/verification"
+                    hx-target="#batches" hx-swap="innerHTML">View report</button>
+          {% else %}
+            <button class="btn secondary" hx-get="/batches/{{ b.id }}"
+                    hx-target="#batches" hx-swap="innerHTML">Details</button>
+          {% endif %}
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="muted" style="margin-top:10px"><a href="#" hx-get="/batches" hx-target="#batches" hx-swap="innerHTML">↻ back to batch list</a></p>
+{% endif %}

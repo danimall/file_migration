@@ -1,0 +1,58 @@
+<div class="row between">
+  <h3 style="margin:0">Batch #{{ batch.seq }} — verification</h3>
+  <button class="btn secondary" hx-get="/batches" hx-target="#batches" hx-swap="innerHTML">← all batches</button>
+</div>
+
+<p class="note" style="margin-top:12px">
+  {{ verified_count }} of {{ non_dead_count }} non-dead files verified — both the
+  download (Dropbox content-hash) and upload (Drive checksum) integrity legs
+  passed, so each file is provably identical on Google Drive.
+</p>
+
+<table style="margin-top:14px">
+  <thead>
+    <tr><th>File</th><th>State</th><th>Leg 1 (download)</th><th>Leg 2 (upload)</th><th>Drive id</th></tr>
+  </thead>
+  <tbody>
+    {% for f in files %}
+    <tr>
+      <td title="{{ f.src_path_display }}">{{ f.src_path_display }}
+        {% if f.is_shared %}<span class="badge" style="color:var(--warn)">shared</span>{% endif %}</td>
+      <td><span class="state {{ f.state }}">{{ f.state }}</span></td>
+      <td>{% if f.leg1_ok %}<span class="badge on"><span class="dot"></span> ok</span>{% else %}<span class="badge off">—</span>{% endif %}</td>
+      <td>{% if f.leg2_ok %}<span class="badge on"><span class="dot"></span> ok</span>{% else %}<span class="badge off">—</span>{% endif %}</td>
+      <td class="muted" style="font-family:var(--mono); font-size:11px">{{ f.dst_file_id or '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% set incomplete = batch.file_count - batch.verified_count %}
+{% if incomplete > 0 %}
+  <div class="row between" style="margin-top:16px; gap:10px">
+    <span class="muted" style="font-size:13px">
+      {{ incomplete }} file(s) not yet verified
+      {% if batch.failed_count %}(<span style="color:var(--err)">{{ batch.failed_count }} failed</span>){% endif %}.
+      Retry copies &amp; re-verifies them.
+    </span>
+    <form hx-post="/batches/{{ batch.id }}/resume" hx-target="#batches" hx-swap="innerHTML"
+          hx-disabled-elt="find button"
+          hx-on::before-request="this.querySelector('button').textContent='Resuming…'">
+      <button class="btn">↻ Resume / retry {{ incomplete }} file(s)</button>
+    </form>
+  </div>
+{% endif %}
+
+{# Copy-and-verify-only build: this app NEVER deletes from Dropbox. #}
+<div class="note" style="margin-top:16px; border-color: color-mix(in srgb, var(--ok) 40%, transparent); color: var(--ok)">
+  <strong>🔒 Copy-only mode — nothing is deleted from Dropbox.</strong>
+  <div class="muted" style="margin-top:6px; color:var(--text)">
+    {% if gate_open %}
+      All {{ verified_count }} files are verified on Google Drive. Your Dropbox
+      originals are untouched — delete them yourself, on your own schedule, once
+      you're satisfied.
+    {% else %}
+      {{ verified_count }} of {{ non_dead_count }} files verified so far.
+    {% endif %}
+  </div>
+</div>

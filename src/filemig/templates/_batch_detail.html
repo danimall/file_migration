@@ -1,0 +1,20 @@
+<div class="row between">
+  <h3 style="margin:0">Batch #{{ batch.seq }} — <span class="state {{ batch.state }}">{{ batch.state }}</span></h3>
+  <button class="btn secondary" hx-get="/batches" hx-target="#batches" hx-swap="innerHTML">← all batches</button>
+</div>
+<table style="margin-top:14px">
+  <thead>
+    <tr><th>File</th><th>State</th><th class="num">Size</th><th class="num">Attempts</th><th>Error</th></tr>
+  </thead>
+  <tbody>
+    {% for f in files %}
+    <tr>
+      <td title="{{ f.src_path_display }}">{{ f.src_path_display }}{% if not f.is_downloadable %} <span class="badge">export</span>{% endif %}{% if f.is_shared %} <span class="badge" style="color:var(--warn)">shared</span>{% endif %}</td>
+      <td><span class="state {{ f.state }}">{{ f.state }}</span></td>
+      <td class="num">{{ (f.size / 1048576) | round(1) }} MiB</td>
+      <td class="num">{{ f.attempts }}</td>
+      <td class="muted" style="max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">{{ f.last_error or '' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>

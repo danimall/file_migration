@@ -1,0 +1,29 @@
+# Secrets and local state — NEVER commit OAuth credentials or migration state
+.env
+.env.*
+!.env.example
+.secrets/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+staging/
+
+# Local agent/editor settings (may contain machine-specific permission rules)
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

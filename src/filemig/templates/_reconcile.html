@@ -1,0 +1,20 @@
+<div class="stats">
+  <div class="stat"><span class="v">{{ report.checked }}</span><span class="k">checked</span></div>
+  <div class="stat"><span class="v" style="color:var(--ok)">{{ report.confirmed }}</span><span class="k">confirmed on Drive</span></div>
+  <div class="stat"><span class="v" style="color:var(--err)">{{ report.missing_on_drive | length }}</span><span class="k">missing</span></div>
+  <div class="stat"><span class="v" style="color:var(--err)">{{ report.checksum_mismatch | length }}</span><span class="k">mismatch</span></div>
+  <div class="stat"><span class="v" style="color:var(--warn)">{{ report.dead | length }}</span><span class="k">dead</span></div>
+</div>
+
+{% if report.ok %}
+  <p class="note" style="margin-top:14px; border-color: color-mix(in srgb, var(--ok) 40%, transparent); color: var(--ok)">
+    ✓ Destination matches source for all verified files.
+  </p>
+{% else %}
+  <p class="note warn-note" style="margin-top:14px">Discrepancies found — do not approve deletions for affected files.</p>
+  {% for p in report.missing_on_drive[:50] %}<div class="muted" style="font-size:12px">MISSING: {{ p }}</div>{% endfor %}
+  {% for p in report.checksum_mismatch[:50] %}<div class="muted" style="font-size:12px">MISMATCH: {{ p }}</div>{% endfor %}
+{% endif %}
+{% if report.not_yet_verified %}
+  <p class="muted" style="margin-top:10px">{{ report.not_yet_verified[0] }}</p>
+{% endif %}

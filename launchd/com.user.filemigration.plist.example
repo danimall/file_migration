@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent to keep filemig running across crashes for a multi-day
+  migration. Copy to ~/Library/LaunchAgents/com.user.filemigration.plist,
+  edit the paths/username, then:
+
+      launchctl load ~/Library/LaunchAgents/com.user.filemigration.plist
+
+  caffeinate keeps the Mac awake; KeepAlive restarts the process if it exits.
+  Replace YOUR_USERNAME and the project path below.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.user.filemigration</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/caffeinate</string>
+        <string>-dimsu</string>
+        <string>/Users/YOUR_USERNAME/projects/file_migration/.venv/bin/filemig</string>
+        <string>run</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/YOUR_USERNAME/projects/file_migration</string>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR_USERNAME/.filemig/filemig.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR_USERNAME/.filemig/filemig.err.log</string>
+</dict>
+</plist>

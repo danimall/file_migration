@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+{% block content %}
+<div>
+  <!-- Global live-activity bar: always polling, so the user can always see
+       what the workers are doing. Polls every 2s. -->
+  <div id="activity-bar" class="panel"
+       style="margin-bottom:20px; padding:12px 18px; position:sticky; top:74px; z-index:5"
+       hx-get="/activity" hx-trigger="load, every 2s" hx-swap="innerHTML">
+    <span class="muted">Loading status…</span>
+  </div>
+
+  <div class="grid two">
+    <!-- Connection panel -->
+    <section class="panel" id="connection"
+             hx-get="/auth/status" hx-trigger="load, every 10s"
+             hx-swap="innerHTML">
+      {% include "_connection.html" %}
+    </section>
+
+    <!-- Scan panel -->
+    <section class="panel">
+      <h2>Inventory</h2>
+      <!-- Poll every 2s while a scan is running (a #scanning marker is present),
+           and also refresh whenever SSE fires. -->
+      <!-- Poll only while a scan is in flight; the _scan fragment includes a
+           #scanning marker only then, so the conditional trigger self-stops. -->
+      <div id="scan"
+           hx-get="/scan/status"
+           hx-trigger="load, every 2s [document.getElementById('scanning')], filemig:refresh from:body"
+           hx-swap="innerHTML">
+        {% include "_scan.html" %}
+      </div>
+      <div class="row" style="margin-top:14px; gap:8px">
+        <form hx-post="/scan" hx-target="#scan" hx-swap="innerHTML"
+              hx-on::before-request="this.querySelector('button').textContent='Scanning…'; this.querySelector('button').disabled=true">
+          <button class="btn secondary" type="submit">Full scan (everything)</button>
+        </form>
+        <span class="muted" style="font-size:12px">…or just browse &amp; pick folders below — no full scan needed.</span>
+      </div>
+    </section>
+  </div>
+
+  <!-- Folder browser -->
+  <section class="panel" style="margin-top:20px">
+    <div class="row between">
+      <h2 style="margin:0">Choose folders to migrate</h2>
+      <button class="btn secondary" hx-get="/browse?refresh=true" hx-target="#browse-tree" hx-swap="innerHTML">↻ Refresh from Dropbox</button>
+    </div>
+    <p class="muted" style="font-size:13px; margin:8px 0 14px">
+      Check the folders you want to move. Selecting a folder queues its whole
+      subtree. Expand <span class="state">▸</span> to drill in. Counts come from
+      your inventory; unscanned folders fetch live when expanded.
+    </p>
+    <div id="browse-form">
+      <div id="browse-tree" hx-get="/browse" hx-trigger="load" hx-swap="innerHTML">
+        <p class="muted">Loading folders…</p>
+      </div>
+      <div class="row between" style="margin-top:16px; gap:10px">
+        <div class="row" style="gap:10px">
+          <button id="propose-btn" class="btn" type="button" onclick="filemigPropose(this)">Plan all batches for selection</button>
+          <button class="btn secondary" type="button" onclick="filemigClearSelection()">Clear selection</button>
+        </div>
+        <span id="selection-summary" class="muted" style="font-size:13px">No folders selected.</span>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    // Toggle a folder's expand/collapse twisty. The children are fetched once
+    // (htmx "click once"); subsequent clicks just show/hide them. Newly fetched
+    // children inherit the parent's checked-and-disabled state if the parent is
+    // selected (so the cascade is visible at every depth).
+    function filemigToggle(btn) {
+      var li = btn.closest('li');
+      var box = li.querySelector(':scope > .children');
+      var expanded = btn.getAttribute('data-expanded') === '1';
+      if (expanded) {
+        box.style.display = 'none'; btn.textContent = '▸'; btn.setAttribute('data-expanded', '0');
+      } else {
+        box.style.display = 'block'; btn.textContent = '▾'; btn.setAttribute('data-expanded', '1');
+      }
+    }
+
+    // When a checkbox changes, cascade its state to every descendant checkbox:
+    // checked+disabled means "included because an ancestor is selected".
+    function filemigCascade(cb) {
+      var li = cb.closest('li');
+      var descendants = li.querySelectorAll('.children input[type=checkbox]');
+      descendants.forEach(function (d) {
+        d.checked = cb.checked;
+        d.disabled = cb.checked;           // can't uncheck a child of a selected parent
+      });
+      filemigUpdateSummary();
+    }
+
+    // After htmx swaps in lazily-loaded children, apply any ancestor's selection
+    // so the freshly revealed rows reflect the cascade too.
+    function filemigApplyAncestorSelection(container) {
+      var ancestorLi = container.closest('li');
+      // Walk up: if any ancestor checkbox is checked, this subtree is included.
+      var node = ancestorLi;
+      while (node) {
+        var cb = node.querySelector(':scope > div input[type=checkbox]');
+        if (cb && cb.checked) {
+          container.querySelectorAll('input[type=checkbox]').forEach(function (d) {
+            d.checked = true; d.disabled = true;
+          });
+          break;
+        }
+        node = node.parentElement ? node.parentElement.closest('li') : null;
+      }
+    }
+
+    function filemigUpdateSummary() {
+      var boxes = document.querySelectorAll('#browse-tree input[type=checkbox]');
+      var files = 0, bytes = 0, folders = 0;
+      boxes.forEach(function (b) {
+        // Count only "top-most" selected folders (checked & not disabled) so we
+        // don't double-count a selected parent and its auto-checked children.
+        if (b.checked && !b.disabled) {
+          folders += 1;
+          files += parseInt(b.getAttribute('data-files') || '0', 10);
+          bytes += parseInt(b.getAttribute('data-bytes') || '0', 10);
+        }
+      });
+      var el = document.getElementById('selection-summary');
+      if (folders === 0) { el.textContent = 'No folders selected.'; return; }
+      var gib = (bytes / 1073741824).toFixed(2);
+      el.textContent = folders + ' folder' + (folders > 1 ? 's' : '') +
+        ' · ' + files.toLocaleString() + ' files · ' + gib + ' GiB selected';
+    }
+
+    // Gather the "top-most" selected folders (checked & enabled — a checked-but-
+    // disabled box means an ancestor is already selected, so it's redundant) and
+    // POST them as JSON. This avoids relying on form serialization of
+    // dynamically-loaded checkboxes, which was dropping the selection.
+    function filemigSelectedFolders() {
+      var out = [];
+      document.querySelectorAll('#browse-tree input[type=checkbox]').forEach(function (b) {
+        if (b.checked && !b.disabled) out.push(b.value);
+      });
+      return out;
+    }
+
+    async function filemigPropose(btn) {
+      var folders = filemigSelectedFolders();
+      var batches = document.getElementById('batches');
+      if (folders.length === 0) {
+        // Render the same warning the server would, without a round trip.
+        batches.querySelectorAll('.note').forEach(function (n) { n.remove(); });
+        var warn = document.createElement('div');
+        warn.className = 'note warn-note';
+        warn.style.marginBottom = '14px';
+        warn.textContent = 'No folders selected — check one or more folders first.';
+        batches.prepend(warn);
+        document.getElementById('batches-section').scrollIntoView({behavior:'smooth', block:'start'});
+        return;
+      }
+      var orig = btn.textContent;
+      btn.textContent = 'Planning…'; btn.disabled = true;
+      try {
+        var resp = await fetch('/batches/propose-folders', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({folders: folders})
+        });
+        batches.innerHTML = await resp.text();
+        if (window.htmx) htmx.process(batches);  // wire up Go/Cancel buttons
+        document.getElementById('batches-section').scrollIntoView({behavior:'smooth', block:'start'});
+      } finally {
+        btn.textContent = orig; btn.disabled = false;
+      }
+    }
+
+    function filemigClearSelection() {
+      document.querySelectorAll('#browse-tree input[type=checkbox]').forEach(function (b) {
+        b.checked = false; b.disabled = false;
+      });
+      filemigUpdateSummary();
+    }
+
+    // Event delegation: any checkbox change inside the tree cascades + resummarizes.
+    document.addEventListener('change', function (e) {
+      if (e.target.matches('#browse-tree input[type=checkbox]')) filemigCascade(e.target);
+    });
+    // After htmx loads a folder's children, propagate ancestor selection into them.
+    document.body.addEventListener('htmx:afterSwap', function (e) {
+      if (e.target.classList && e.target.classList.contains('children')) {
+        filemigApplyAncestorSelection(e.target);
+        filemigUpdateSummary();
+      }
+    });
+  </script>
+
+  <!-- Batches -->
+  <section class="panel" id="batches-section" style="margin-top:20px">
+    <div class="row between">
+      <h2 style="margin:0">Batches</h2>
+      <div class="row" style="gap:8px">
+        <form hx-post="/batches/start-all" hx-target="#batches" hx-swap="innerHTML"
+              hx-disabled-elt="find button"
+              hx-on::before-request="this.querySelector('button').textContent='Starting…'">
+          <button class="btn" type="submit">▶ Start all proposed</button>
+        </form>
+      </div>
+    </div>
+    <!-- Poll the batch list every 3s so copy/verify progress is always live.
+         (htmx preserves focus/scroll on swap; the quota gauge + counters update
+         in place.) -->
+    <div id="batches" style="margin-top:14px"
+         hx-get="/batches"
+         hx-trigger="load, every 3s"
+         hx-swap="innerHTML">
+      {% include "_batch_list.html" ignore missing %}
+    </div>
+  </section>
+
+  <!-- Reconcile -->
+  <section class="panel" style="margin-top:20px">
+    <div class="row between">
+      <h2 style="margin:0">Reconciliation</h2>
+      <form hx-post="/reconcile" hx-target="#reconcile" hx-swap="innerHTML">
+        <button class="btn secondary" type="submit">Verify destination vs source</button>
+      </form>
+    </div>
+    <div id="reconcile" style="margin-top:14px" class="muted">
+      Run a reconciliation pass before approving deletions.
+    </div>
+  </section>
+
+  <p class="note" style="margin-top:20px">
+    Keep this Mac awake for multi-day transfers — run under
+    <code>caffeinate -dimsu</code>. Google caps uploads at ~750&nbsp;GB/day, so
+    a 1&nbsp;TB migration spans several days; the scheduler self-throttles.
+  </p>
+</div>
+{% endblock %}

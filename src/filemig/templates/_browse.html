@@ -1,0 +1,47 @@
+{# Renders one level of the folder tree. Each folder row can expand (lazily
+   fetching its children via /browse?path=...) and carries a checkbox whose
+   value is the folder's path_lower for subtree selection. Selecting a folder
+   visually cascades to its descendants (checked + disabled = "included via
+   parent"); the backend queues the whole subtree by path regardless. #}
+{% macro gib(n) %}{{ (n / 1073741824) | round(2) }}{% endmacro %}
+{% if parent is none and not children %}
+  <p class="muted">No folders yet. Connect Dropbox and click <em>Refresh from Dropbox</em>, or run a full scan.</p>
+{% endif %}
+<ul class="tree" style="list-style:none; margin:0; padding-left:{{ 0 if parent is none else 22 }}px">
+  {% for f in children %}
+  <li class="folder-li" style="padding:3px 0">
+    <div class="row" style="gap:8px; align-items:center">
+      {% if f.has_child_folders %}
+        <button type="button" class="twisty btn secondary"
+                style="padding:1px 7px; font-size:12px; line-height:1; min-width:24px"
+                data-expanded="0"
+                hx-get="/browse?path={{ f.src_path_lower | urlencode }}"
+                hx-target="next .children" hx-swap="innerHTML"
+                hx-trigger="click once"
+                onclick="filemigToggle(this)">▸</button>
+      {% else %}
+        <span style="display:inline-block; width:24px; text-align:center; color:var(--muted)">·</span>
+      {% endif %}
+
+      <label class="row" style="gap:8px; cursor:pointer; flex:1; align-items:center">
+        <input type="checkbox" name="folders" value="{{ f.src_path_lower }}"
+               data-files="{{ f.file_count }}" data-bytes="{{ f.total_bytes }}">
+        <span>📁 {{ f.name }}</span>
+        <span class="muted" style="font-size:12px">
+          {{ "{:,}".format(f.file_count) }} files · {{ gib(f.total_bytes) }} GiB
+          {% if f.fully_migrated %}
+            · <span style="color:var(--ok)">✓ copied &amp; verified</span>
+          {% elif f.migrated_count %}
+            · <span style="color:var(--accent)">{{ "{:,}".format(f.migrated_count) }}/{{ "{:,}".format(f.file_count) }} verified{% if f.in_progress_count %}, {{ f.in_progress_count }} in progress{% endif %}</span>
+          {% elif f.in_progress_count %}
+            · <span style="color:var(--accent)">queued — {{ "{:,}".format(f.in_progress_count) }} pending</span>
+          {% endif %}
+          {% if f.dead_count %}· <span style="color:var(--err)">{{ f.dead_count }} failed</span>{% endif %}
+        </span>
+      </label>
+    </div>
+    {# Direct-child container for lazily-loaded subfolders (collapsed initially). #}
+    <div class="children" style="display:none"></div>
+  </li>
+  {% endfor %}
+</ul>

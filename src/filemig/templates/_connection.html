@@ -1,0 +1,42 @@
+<h2>Connections</h2>
+<div class="grid" style="gap:12px">
+  <div class="row between">
+    <span class="row"><span class="pill-dbx">●</span> Dropbox</span>
+    {% if dropbox_connected %}
+      <span class="badge on"><span class="dot"></span> connected</span>
+    {% else %}
+      <a class="btn secondary" href="/auth/dropbox/connect">Connect</a>
+    {% endif %}
+  </div>
+  <div class="row between">
+    <span class="row"><span class="pill-gdrive">●</span> Google Drive</span>
+    {% if google_connected %}
+      <span class="badge on"><span class="dot"></span> connected</span>
+    {% else %}
+      <a class="btn secondary" href="/auth/google/connect">Connect</a>
+    {% endif %}
+  </div>
+</div>
+
+{% set drive_quota = drive_quota if drive_quota is defined else none %}
+{% if drive_quota is not none %}
+  {% if drive_quota.error is defined %}
+    <p class="note warn-note" style="margin-top:14px">Drive quota check failed: {{ drive_quota.error }}</p>
+  {% else %}
+    {% set used = (drive_quota.usage | int) if drive_quota.usage is defined else 0 %}
+    {% set limit = (drive_quota.limit | int) if drive_quota.limit is defined else 0 %}
+    <div style="margin-top:16px">
+      <div class="row between" style="font-size:13px">
+        <span class="muted">Drive storage</span>
+        {% if limit %}
+          <span class="muted">{{ (used / 1073741824) | round(1) }} / {{ (limit / 1073741824) | round(1) }} GiB</span>
+        {% else %}
+          <span class="muted">{{ (used / 1073741824) | round(1) }} GiB used (pooled/unlimited)</span>
+        {% endif %}
+      </div>
+      {% if limit %}
+        <div class="meter" style="margin-top:6px"><span style="width: {{ ((used / limit) * 100) | round(1) }}%"></span></div>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endif %}

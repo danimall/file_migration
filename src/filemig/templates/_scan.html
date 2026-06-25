@@ -1,0 +1,24 @@
+{% if is_scanning %}
+  <span id="scanning"></span>
+  <div class="row"><span class="badge"><span class="dot" style="color:var(--accent)"></span> scanning Dropbox…</span></div>
+{% endif %}
+{% if total_files %}
+  <div class="stats" style="margin-top:6px">
+    <div class="stat"><span class="v">{{ "{:,}".format(total_files) }}</span><span class="k">files discovered</span></div>
+    <div class="stat"><span class="v">{{ (total_bytes / 1099511627776) | round(2) }}</span><span class="k">TiB total</span></div>
+    {% if summary and summary.cloud_doc_count %}
+      <div class="stat"><span class="v">{{ summary.cloud_doc_count }}</span><span class="k">cloud docs</span></div>
+    {% endif %}
+  </div>
+  {% if not is_scanning %}
+    <p class="muted" style="margin-top:8px; font-size:13px">✓ Inventory ready — browse folders below and select what to migrate.</p>
+  {% endif %}
+  {% if summary and summary.path_collisions %}
+    <p class="note warn-note" style="margin-top:10px">{{ summary.path_collisions | length }} path-case collision(s) detected — review before migrating.</p>
+  {% endif %}
+  {% if summary and summary.deep_folder_count %}
+    <p class="note warn-note" style="margin-top:10px">{{ summary.deep_folder_count }} folder(s) exceed Drive's 100-level nesting limit.</p>
+  {% endif %}
+{% elif not is_scanning %}
+  <p class="muted">No files discovered yet. Browse folders below (fetches live from Dropbox) or run a full scan.</p>
+{% endif %}
