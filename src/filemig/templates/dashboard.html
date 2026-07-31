@@ -161,7 +161,10 @@
       try {
         var resp = await fetch('/batches/propose-folders', {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Filemig-CSRF': filemigCsrfToken()
+          },
           body: JSON.stringify({folders: folders})
         });
         batches.innerHTML = await resp.text();
@@ -224,7 +227,7 @@
       </form>
     </div>
     <div id="reconcile" style="margin-top:14px" class="muted">
-      Run a reconciliation pass before approving deletions.
+      Run a reconciliation pass before deleting the originals yourself.
     </div>
   </section>
 

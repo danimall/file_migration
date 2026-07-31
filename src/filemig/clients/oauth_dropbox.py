@@ -2,14 +2,13 @@
 
 Flow:
 1. Redirect the user to the authorize URL with ``token_access_type=offline``
-   (REQUIRED to receive a refresh_token) and the three scopes we need.
+   (REQUIRED to receive a refresh_token) and the two read scopes we need.
 2. Dropbox redirects back with ``?code=...``; exchange it at
    ``https://api.dropboxapi.com/oauth2/token`` (note: api.dropboxapi.com, not
    api.dropbox.com) for an access token + refresh token.
 3. Persist only the refresh token; mint access tokens on demand.
 
-Scopes: files.metadata.read, files.content.read, files.content.write
-(content.write is required to delete).
+Scopes: files.metadata.read, files.content.read.
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ from filemig.domain.errors import AuthError
 
 AUTHORIZE_URL = "https://www.dropbox.com/oauth2/authorize"
 TOKEN_URL = "https://api.dropboxapi.com/oauth2/token"  # api.dropboxapi.com!
-SCOPES = ["files.metadata.read", "files.content.read", "files.content.write"]
+SCOPES = ["files.metadata.read", "files.content.read"]
 PROVIDER = "dropbox"
 
 

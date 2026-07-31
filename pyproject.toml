@@ -1,8 +1,9 @@
 [project]
 name = "filemig"
 version = "0.1.0"
-description = "Safe, batch-at-a-time file migration from Dropbox to Google Drive with verify-before-delete"
+description = "Copy-and-verify migration from Dropbox to Google Drive"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

@@ -79,7 +79,8 @@ class WorkerPool:
             await self._paused.wait()
             if self._stop.is_set():
                 break
-            file = await self._store.claim_next_file(self._run.id, worker_id)
+            file = await self._store.claim_next_file(
+                self._run.id, worker_id, order=self._settings.claim_order)
             if file is None:
                 await asyncio.sleep(IDLE_SLEEP)
                 continue

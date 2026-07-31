@@ -1,4 +1,4 @@
-# filemig — safe Dropbox → Google Drive migration
+# filemig — copy-and-verify Dropbox → Google Drive migration
 
 A local, single-user web app that migrates files from a personal Dropbox to a
 personal Google Drive **safely and verifiably**. Every file is downloaded,
@@ -35,7 +35,11 @@ mirroring your Dropbox folder structure.
     `sha256Checksum` when present) plus size. A real content hash is *always*
     compared — never size alone.
 * **No deletion.** The app cannot remove anything from Dropbox (enforced at the
-  client, service, and route layers).
+  OAuth scope, client, service, and route layers). It requests read-only
+  Dropbox access.
+* **Local control plane.** The dashboard binds only to `127.0.0.1`, rejects
+  untrusted hostnames, and requires a per-process CSRF token for every mutating
+  request.
 * **Crash-safe & resumable.** All state lives in one SQLite file (WAL). On
   restart, interrupted work resumes from durable checkpoints, including mid-file
   resumable uploads (the Drive session URI + confirmed byte offset are
@@ -49,8 +53,8 @@ mirroring your Dropbox folder structure.
 * Python 3.12+ and [`uv`](https://docs.astral.sh/uv/).
 * A **Dropbox** scoped app (App Console → *Create app* → *Scoped access* →
   *Full Dropbox*). On the **Permissions** tab enable `files.metadata.read`,
-  `files.content.read`, `files.content.write`, then **Submit**. On **Settings**,
-  add the redirect URI `http://127.0.0.1:8766/auth/dropbox/callback`.
+  `files.content.read`, then **Submit**. On **Settings**, add the redirect URI
+  `http://127.0.0.1:8765/auth/dropbox/callback`.
 * A **Google Cloud** project with the **Drive API** enabled and an OAuth client
   of type **Desktop app**.
   * Consent-screen scope: `https://www.googleapis.com/auth/drive.file`
@@ -72,7 +76,7 @@ cp .env.example .env        # then fill in the four app keys/secrets
 ## Run
 
 ```sh
-uv run filemig run          # serves http://127.0.0.1:8766/
+uv run filemig run          # serves http://127.0.0.1:8765/
 ```
 
 Open the dashboard, connect both accounts, then browse → select → plan → start.
@@ -102,11 +106,13 @@ in `src/filemig/clients/dropbox_client.py`. While off:
 
 * the Dropbox client's delete methods raise before any API call,
 * `service.approve_delete` refuses, and
-* the `/batches/{id}/approve-delete` route returns 403.
+* the `/batches/{id}/approve-delete` route returns 403, and
+* the OAuth token has no Dropbox write scope.
 
-To re-enable deletion, flip that constant and restore the deletion flow in the
-service/routes/UI. The (verified, manual-approval, soft-delete) deleter and its
-tests are retained but unused.
+To re-enable deletion, explicitly add the `files.content.write` scope, flip
+that constant, and restore the deletion flow in the service/routes/UI. The
+(verified, manual-approval, soft-delete) deleter and its tests are retained but
+unused.
 
 ## Architecture
 
@@ -118,3 +124,7 @@ machines, and verification protocol.
 ```sh
 uv run pytest
 ```
+
+## License
+
+Released under the [MIT License](LICENSE).

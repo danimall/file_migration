@@ -39,7 +39,13 @@ class MigrationService:
         self.db = Database(settings.db_path)
         self.tokens = TokenStore(settings.secrets_dir)
         self.auth = AuthManager(settings, self.tokens)
-        self._http = httpx.AsyncClient(timeout=httpx.Timeout(60.0, read=300.0))
+        # Size the connection pool to the worker count (each worker may have a
+        # couple of requests in flight) so concurrency isn't capped by the pool.
+        _pool = max(20, settings.worker_concurrency * 4)
+        self._http = httpx.AsyncClient(
+            timeout=httpx.Timeout(60.0, read=300.0),
+            limits=httpx.Limits(max_connections=_pool,
+                                max_keepalive_connections=_pool))
         self.dropbox = DropboxClient(self.auth, self._http)
         self.drive = DriveClient(self.auth, self._http)
         self.run: models.Run | None = None
@@ -159,6 +165,17 @@ class MigrationService:
         assert self.run is not None
         return await scheduler.plan_all_batches_from_folders(
             self.store, self.settings, self.run, path_lowers)
+
+    async def plan_all_remaining(self) -> dict[str, int]:
+        """Plan batches for every unbatched discovered file (catches orphans)."""
+        assert self.run is not None
+        return await scheduler.plan_all_remaining(self.store, self.settings, self.run)
+
+    async def skip_files(self, patterns: list[str]) -> dict[str, int]:
+        """Exclude not-yet-started files matching SQL LIKE patterns (e.g.
+        '%/venv/%'). Safe to run during a live transfer."""
+        assert self.run is not None
+        return await self.store.skip_files_matching(self.run.id, patterns)
 
     async def start_all(self) -> dict[str, int]:
         """Run every proposed batch (the 'Start all' action)."""

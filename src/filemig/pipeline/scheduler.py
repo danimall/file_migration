@@ -109,6 +109,24 @@ async def plan_all_batches_from_folders(
     750 GiB/day cap and resuming once the window rolls). Returns a summary.
     """
     file_ids = await store.queue_subtree_files(run.id, path_lowers)
+    return await _chunk_into_batches(store, settings, run, file_ids)
+
+
+async def plan_all_remaining(
+    store: Store, settings: Settings, run: models.Run
+) -> dict[str, int]:
+    """Plan batches for EVERY unbatched, still-``discovered`` file in the run,
+    regardless of folder. Catches orphaned files (e.g. those at the account
+    root, or never assigned to a batch by an earlier action)."""
+    file_ids = await store.all_unbatched_discovered(run.id)
+    return await _chunk_into_batches(store, settings, run, file_ids)
+
+
+async def _chunk_into_batches(
+    store: Store, settings: Settings, run: models.Run, file_ids: list[int]
+) -> dict[str, int]:
+    """Chunk a list of file ids into proposed batches, bounded by the per-batch
+    file limit and byte target. Oversized files (> a day's cap) are dead-let."""
     summary = {"selected_files": len(file_ids), "batches": 0,
                "queued_files": 0, "queued_bytes": 0, "skipped_oversized": 0}
     if not file_ids:
@@ -124,14 +142,12 @@ async def plan_all_batches_from_folders(
         f = await store.get_file(fid)
         if f is None:
             continue
-        # A single file larger than a whole day's cap can never be scheduled.
         if f.size >= cap:
             await store.mark_dead(
                 f.id, f"file size {f.size} exceeds effective daily cap; "
                 "cannot migrate in one window")
             summary["skipped_oversized"] += 1
             continue
-        # Flush the current chunk if adding this file would exceed either cap.
         if chunk and (len(chunk) >= file_limit
                       or chunk_bytes + f.size > byte_target):
             await store.create_batch(run.id, chunk, chunk_bytes)

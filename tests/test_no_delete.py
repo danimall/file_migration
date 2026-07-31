@@ -10,7 +10,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from filemig.clients import dropbox_client
+from filemig.clients import dropbox_client, oauth_dropbox
 from filemig.clients.auth import AuthManager
 from filemig.clients.dropbox_client import DropboxClient
 from filemig.clients.tokens import TokenStore
@@ -20,6 +20,7 @@ from filemig.domain.errors import FatalError
 
 def test_kill_switch_is_off_by_default():
     assert dropbox_client.DROPBOX_DELETION_ENABLED is False
+    assert "files.content.write" not in oauth_dropbox.SCOPES
 
 
 @pytest.fixture

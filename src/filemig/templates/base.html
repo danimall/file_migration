@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="filemig-csrf-token" content="{{ csrf_token }}">
   <title>filemig — Dropbox → Google Drive</title>
   <script src="https://unpkg.com/htmx.org@2.0.3"></script>
   <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
@@ -89,10 +90,18 @@
     <span class="logo">filemig</span>
     <span class="flow"><span class="pill-dbx">Dropbox</span> → <span class="pill-gdrive">Google Drive</span></span>
     <span class="spacer"></span>
-    <span class="badge"><span class="dot"></span> verify-before-delete</span>
+    <span class="badge"><span class="dot"></span> copy-and-verify only</span>
   </header>
   <main>
     {% block content %}{% endblock %}
   </main>
+  <script>
+    function filemigCsrfToken() {
+      return document.querySelector('meta[name="filemig-csrf-token"]').content;
+    }
+    document.body.addEventListener('htmx:configRequest', function (event) {
+      event.detail.headers['X-Filemig-CSRF'] = filemigCsrfToken();
+    });
+  </script>
 </body>
 </html>

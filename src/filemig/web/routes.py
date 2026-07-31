@@ -36,6 +36,7 @@ def settings(request: Request):
 async def dashboard(request: Request):
     service = svc(request)
     return _templates.TemplateResponse(request, "dashboard.html", {
+        "csrf_token": request.app.state.csrf_token,
         "dropbox_connected": service.auth.is_connected("dropbox"),
         "google_connected": service.auth.is_connected("google"),
         "scan_summary": service.scan_summary,
@@ -176,6 +177,57 @@ async def propose_folders(request: Request):
             f"Review below, then click “Start all” to copy & verify everything.")
     if info.get("skipped_oversized"):
         text += f" ({info['skipped_oversized']} oversized file(s) skipped.)"
+    return await _render_batches(request, notice={"kind": "ok", "text": text})
+
+
+# Common junk to exclude: Python virtualenvs, dependency dirs, build/VCS caches.
+SKIP_PRESETS = {
+    "venv": ["%/venv/%", "%/.venv/%", "%/site-packages/%", "%/__pycache__/%",
+             "%/node_modules/%", "%/.git/%"],
+}
+
+
+@router.post("/files/skip", response_class=HTMLResponse)
+async def skip_files(request: Request):
+    """Exclude not-yet-started files from the migration. Body (JSON) may give a
+    ``preset`` (e.g. "venv") or explicit ``patterns`` (SQL LIKE)."""
+    service = svc(request)
+    patterns: list[str] = []
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if body.get("preset") in SKIP_PRESETS:
+        patterns = SKIP_PRESETS[body["preset"]]
+    patterns += [str(p) for p in (body.get("patterns") or []) if p]
+    if not patterns:
+        return await _render_batches(request, notice={
+            "kind": "warn", "text": "No skip patterns given."})
+    summary = await service.skip_files(patterns)
+    gib = 1073741824
+    if summary["skipped"]:
+        text = (f"⏭ Skipped {summary['skipped']:,} not-yet-started files "
+                f"({summary['skipped_bytes'] / gib:.2f} GiB) — they won't be copied. "
+                "Remaining work will finish much faster.")
+        kind = "ok"
+    else:
+        text = "Nothing to skip — no matching files are still pending."
+        kind = "warn"
+    return await _render_batches(request, notice={"kind": kind, "text": text})
+
+
+@router.post("/batches/plan-remaining", response_class=HTMLResponse)
+async def plan_remaining(request: Request):
+    """Plan batches for ALL not-yet-batched files (orphans included)."""
+    service = svc(request)
+    info = await service.plan_all_remaining()
+    gib = 1073741824
+    if info["batches"] == 0:
+        return await _render_batches(request, notice={
+            "kind": "warn", "text": "Nothing left to plan — all files are batched or done."})
+    text = (f"✓ Planned {info['batches']} batch(es) for all remaining files: "
+            f"{info['queued_files']:,} files ({info['queued_bytes'] / gib:.2f} GiB). "
+            "Click “Start all” to migrate everything left.")
     return await _render_batches(request, notice={"kind": "ok", "text": text})
 
 

@@ -35,7 +35,9 @@ class MultiHasher:
 
     def __init__(self) -> None:
         self._dbx = DropboxContentHasher()
-        self._md5 = hashlib.md5()
+        # Google Drive exposes MD5 as a content checksum. It is never used for
+        # authentication or another security decision; SHA-256 is computed too.
+        self._md5 = hashlib.md5(usedforsecurity=False)
         self._sha256 = hashlib.sha256()
         self._size = 0
 

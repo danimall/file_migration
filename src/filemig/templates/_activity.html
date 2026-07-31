@@ -11,13 +11,29 @@
   {%- elif s >= 60 -%}{{ (s // 60) }}m {{ (s % 60) }}s
   {%- else -%}{{ s }}s{%- endif -%}
 {% endmacro %}
+{# Always-visible pause/resume control. Targets the activity bar itself so the
+   button + paused badge update immediately, then 2s polling keeps it in sync. #}
+{% macro pausebtn(paused) %}
+  {% if paused %}
+    <form hx-post="/control/resume" hx-target="#activity-bar" hx-swap="innerHTML" style="display:inline">
+      <button class="btn ok" type="submit">▶ Resume</button>
+    </form>
+  {% else %}
+    <form hx-post="/control/pause" hx-target="#activity-bar" hx-swap="innerHTML" style="display:inline">
+      <button class="btn secondary" type="submit">⏸ Pause</button>
+    </form>
+  {% endif %}
+{% endmacro %}
 {% if a.active %}
   <div style="width:100%">
     <div class="row between" style="font-size:13px; margin-bottom:6px">
       <span class="row" style="gap:8px">
-        <span class="badge on"><span class="dot"></span>
-          {% if a.scanning %}scanning Dropbox…{% else %}migrating{% endif %}</span>
-        {% if a.paused %}<span class="badge" style="color:var(--warn)">paused</span>{% endif %}
+        {% if a.paused %}
+          <span class="badge" style="color:var(--warn)"><span class="dot"></span> paused</span>
+        {% else %}
+          <span class="badge on"><span class="dot"></span>
+            {% if a.scanning %}scanning Dropbox…{% else %}migrating{% endif %}</span>
+        {% endif %}
         {% if not a.scanning %}
           <span class="muted">
             {{ "{:,}".format(a.done_files) }} / {{ "{:,}".format(a.total_files) }} files
@@ -25,13 +41,16 @@
           </span>
         {% endif %}
       </span>
-      {% if not a.scanning %}
-        <span class="muted">
-          {{ a.pct }}%
-          {% if a.rate_bps %}· {{ humansize(a.rate_bps) }}/s{% endif %}
-          {% if a.eta_seconds is not none %}· ~{{ eta(a.eta_seconds) }} left{% endif %}
-        </span>
-      {% endif %}
+      <span class="row" style="gap:10px; align-items:center">
+        {% if not a.scanning %}
+          <span class="muted">
+            {{ a.pct }}%
+            {% if a.rate_bps %}· {{ humansize(a.rate_bps) }}/s{% endif %}
+            {% if a.eta_seconds is not none %}· ~{{ eta(a.eta_seconds) }} left{% endif %}
+          </span>
+        {% endif %}
+        {{ pausebtn(a.paused) }}
+      </span>
     </div>
     {% if not a.scanning %}
       <div class="meter"><span style="width: {{ a.pct }}%"></span></div>
@@ -50,11 +69,18 @@
 {% else %}
   <div class="row between" style="width:100%">
     <span class="row" style="gap:10px">
-      <span class="badge"><span class="dot" style="color:var(--muted)"></span> idle</span>
+      {% if a.paused %}
+        <span class="badge" style="color:var(--warn)"><span class="dot"></span> paused</span>
+      {% else %}
+        <span class="badge"><span class="dot" style="color:var(--muted)"></span> idle</span>
+      {% endif %}
       <span class="muted" style="font-size:13px">
         {% if a.done_files %}✓ {{ "{:,}".format(a.done_files) }} files copied &amp; verified on Drive{% else %}no active transfers{% endif %}
       </span>
     </span>
-    {% if a.dead %}<span class="muted" style="font-size:13px; color:var(--err)">{{ a.dead }} file(s) failed — see batch details</span>{% endif %}
+    <span class="row" style="gap:10px; align-items:center">
+      {% if a.dead %}<span class="muted" style="font-size:13px; color:var(--err)">{{ a.dead }} file(s) failed — see batch details</span>{% endif %}
+      {{ pausebtn(a.paused) }}
+    </span>
   </div>
 {% endif %}

@@ -5,7 +5,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from filemig.config import get_settings
+from filemig.config import LOOPBACK_HOST, get_settings
+
+
+def _loopback_host(value: str) -> str:
+    if value != LOOPBACK_HOST:
+        raise argparse.ArgumentTypeError(
+            "filemig only supports --host 127.0.0.1"
+        )
+    return value
 
 
 def main() -> None:
@@ -13,7 +21,10 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command")
 
     run_p = sub.add_parser("run", help="start the web dashboard + workers")
-    run_p.add_argument("--host", default=None)
+    run_p.add_argument(
+        "--host", type=_loopback_host, default=None,
+        help="listen address (security-restricted to 127.0.0.1)",
+    )
     run_p.add_argument("--port", type=int, default=None)
 
     sub.add_parser("reconcile", help="run a reconciliation pass and print a report")

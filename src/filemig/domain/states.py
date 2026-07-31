@@ -25,6 +25,7 @@ class FileState(StrEnum):
     DONE = "done"
     FAILED = "failed"  # retryable; re-queued with backoff while attempts remain
     DEAD = "dead"  # exhausted / fatal / hash mismatch — NEVER auto-deleted
+    SKIPPED = "skipped"  # deliberately excluded by the user; not an error
 
 
 # Transient states are interrupted work that a crash can leave behind. On
@@ -50,6 +51,7 @@ DURABLE_STATES: frozenset[FileState] = frozenset(
         FileState.DONE,
         FileState.FAILED,
         FileState.DEAD,
+        FileState.SKIPPED,
     }
 )
 

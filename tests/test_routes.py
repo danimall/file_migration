@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from filemig.app import create_app
+from filemig.app import CSRF_HEADER, create_app
 from filemig.config import Settings
 
 
@@ -19,14 +19,17 @@ def client(tmp_path):
     settings = Settings(data_dir=tmp_path,
                         dropbox_app_key="dbxkey", google_client_id="gid")
     app = create_app(settings)
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
+        c.headers.update({CSRF_HEADER: app.state.csrf_token})
         yield c
 
 
 def test_dashboard_renders(client):
     r = client.get("/")
     assert r.status_code == 200
-    assert "verify-before-delete" in r.text
+    assert "copy-and-verify only" in r.text
+    assert r.headers["x-frame-options"] == "DENY"
+    assert r.headers["content-security-policy"] == "frame-ancestors 'none'"
 
 
 @pytest.mark.parametrize("path", ["/auth/status", "/batches", "/scan/status",
@@ -47,7 +50,9 @@ def test_dropbox_connect_redirect_is_offline(client):
     loc = r.headers["location"]
     assert "dropbox.com/oauth2/authorize" in loc
     assert "token_access_type=offline" in loc  # required for a refresh token
-    assert "files.content.write" in loc  # required to delete
+    assert "files.metadata.read" in loc
+    assert "files.content.read" in loc
+    assert "files.content.write" not in loc  # copy-only build stays read-only
 
 
 def test_google_connect_redirect_is_pkce_consent(client):
@@ -74,3 +79,16 @@ def test_approve_delete_is_disabled(client):
     assert client.post("/batches/1/approve-delete",
                        data={"confirm": "yes"}).status_code == 403
     assert client.post("/batches/999/approve-delete").status_code == 403
+
+
+def test_mutating_routes_require_csrf(client):
+    assert client.post("/scan", headers={CSRF_HEADER: ""}).status_code == 403
+
+
+def test_untrusted_host_is_rejected(client):
+    assert client.get("/", headers={"host": "attacker.example"}).status_code == 400
+
+
+def test_remote_binding_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="remote binding is disabled"):
+        Settings(data_dir=tmp_path, host="0.0.0.0")

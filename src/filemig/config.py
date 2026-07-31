@@ -10,13 +10,14 @@ from __future__ import annotations
 import functools
 from pathlib import Path
 
-from pydantic import Field, computed_field
+from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Google's hard per-user upload cap: 750 GiB/day across My Drive + all shared
 # drives. Unraisable. A 1 TB migration must therefore span multiple days.
 _GIB = 1024**3
 DAILY_CAP_BYTES_DEFAULT = 750 * _GIB
+LOOPBACK_HOST = "127.0.0.1"
 
 # Drive resumable uploads require every non-final chunk to be an exact multiple
 # of 256 KiB. We default to 32 MiB (a multiple of 256 KiB) for efficiency.
@@ -38,8 +39,18 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
 
     # ---- Server ----
-    host: str = "127.0.0.1"
+    host: str = LOOPBACK_HOST
     port: int = 8765
+
+    @field_validator("host")
+    @classmethod
+    def require_loopback_host(cls, value: str) -> str:
+        """Keep the unauthenticated single-user dashboard local to this Mac."""
+        if value != LOOPBACK_HOST:
+            raise ValueError(
+                "FILEMIG_HOST must be 127.0.0.1; remote binding is disabled"
+            )
+        return value
 
     # ---- Storage ----
     # Base data dir; if unset, defaults to ~/.filemig (see computed properties).
@@ -50,6 +61,10 @@ class Settings(BaseSettings):
     worker_concurrency: int = 2
     upload_chunk_bytes: int = 32 * 1024 * 1024  # 32 MiB (256 KiB multiple)
     max_attempts: int = 5
+    # Order in which workers claim queued files: "fifo" | "largest" | "smallest".
+    # "largest" prioritizes big data first; the many tiny, latency-bound files
+    # then mop up afterward.
+    claim_order: str = "fifo"
 
     # ---- Quota / batching ----
     daily_cap_bytes: int = DAILY_CAP_BYTES_DEFAULT

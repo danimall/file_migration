@@ -197,6 +197,15 @@ class Store:
                 "migrated_count": row["migrated"], "dead_count": row["dead"],
                 "in_progress_count": row["in_progress"]}
 
+    async def all_unbatched_discovered(self, run_id: int, limit: int = 1000000) -> list[int]:
+        """Every still-``discovered`` file not yet assigned to a batch — i.e. all
+        eligible work regardless of folder (catches root-level/orphaned files)."""
+        rows = await self.db.fetchall(
+            "SELECT id FROM files WHERE run_id=? AND batch_id IS NULL AND state=? "
+            "ORDER BY src_path_lower LIMIT ?",
+            (run_id, FileState.DISCOVERED.value, limit))
+        return [r["id"] for r in rows]
+
     async def queue_subtree_files(
         self, run_id: int, path_lowers: list[str], limit: int = 100000
     ) -> list[int]:
@@ -311,21 +320,33 @@ class Store:
     # -- files: leasing -----------------------------------------------------
 
     async def claim_next_file(
-        self, run_id: int, worker_id: str, lease_seconds: int = 1800
+        self, run_id: int, worker_id: str, lease_seconds: int = 1800,
+        order: str = "fifo",
     ) -> models.FileRecord | None:
         """Atomically claim the next queued file belonging to a running batch.
+
+        ``order`` selects which queued file to take next:
+          * ``"fifo"``        — insertion order (default).
+          * ``"largest"``     — biggest file first (prioritize big data; tiny
+                                latency-bound files mop up afterward).
+          * ``"smallest"``    — smallest first (quick early wins).
 
         Returns the claimed file moved into ``downloading`` (or ``None``). The
         claim, state transition, and event all happen in one transaction.
         """
         lease_until = utcnow_iso_in(lease_seconds)
+        order_by = {
+            "fifo": "f.id",
+            "largest": "f.size DESC, f.id",
+            "smallest": "f.size ASC, f.id",
+        }.get(order, "f.id")
 
         def txn(conn: sqlite3.Connection) -> models.FileRecord | None:
             row = conn.execute(
                 "SELECT f.* FROM files f JOIN batches b ON f.batch_id=b.id "
                 "WHERE f.run_id=? AND f.state=? AND b.state='running' "
                 "  AND (f.leased_until IS NULL OR f.leased_until < ?) "
-                "ORDER BY f.id LIMIT 1",
+                f"ORDER BY {order_by} LIMIT 1",
                 (run_id, FileState.QUEUED.value, utcnow_iso()),
             ).fetchone()
             if row is None:
@@ -658,6 +679,47 @@ class Store:
         _publish(run_id, None, None, "batches_started", None, "running")
         return result
 
+    async def skip_files_matching(
+        self, run_id: int, patterns: list[str]
+    ) -> dict[str, int]:
+        """Mark not-yet-started files whose path matches any LIKE pattern as
+        ``skipped`` (a deliberate, terminal exclusion — not a failure).
+
+        Only touches files that haven't begun transferring (queued/discovered).
+        In-flight and already-verified files are left alone, so this is safe to
+        run while the transfer is live. Returns counts + bytes skipped, and
+        advances any batch that is now fully settled.
+        """
+        if not patterns:
+            return {"skipped": 0, "skipped_bytes": 0}
+        like = " OR ".join("src_path_lower LIKE ?" for _ in patterns)
+
+        def txn(conn: sqlite3.Connection) -> dict[str, int]:
+            sel = conn.execute(
+                f"SELECT COUNT(*) c, COALESCE(SUM(size),0) b FROM files "
+                f"WHERE run_id=? AND state IN (?,?) AND ({like})",
+                (run_id, FileState.QUEUED.value, FileState.DISCOVERED.value,
+                 *patterns)).fetchone()
+            n, nbytes = sel["c"], sel["b"]
+            if n:
+                conn.execute(
+                    f"UPDATE files SET state=?, last_error='skipped by user', "
+                    f"leased_by=NULL, leased_until=NULL, updated_at=? "
+                    f"WHERE run_id=? AND state IN (?,?) AND ({like})",
+                    (FileState.SKIPPED.value, utcnow_iso(), run_id,
+                     FileState.QUEUED.value, FileState.DISCOVERED.value, *patterns))
+                # Advance any batch that is now fully settled.
+                for br in conn.execute(
+                    "SELECT id, state, run_id FROM batches WHERE run_id=? AND state=?",
+                    (run_id, BatchState.RUNNING.value)).fetchall():
+                    _maybe_settle_batch(conn, br["id"], br["run_id"])
+            return {"skipped": n, "skipped_bytes": nbytes}
+
+        result = await self.db.transaction(txn)
+        _publish(run_id, None, None, "files_skipped", None, None,
+                 {"skipped": result["skipped"]})
+        return result
+
     async def resume_batch(self, batch_id: int) -> dict[str, int]:
         """Re-activate a batch to retry its incomplete files.
 
@@ -708,33 +770,7 @@ class Store:
                 "SELECT * FROM batches WHERE id=?", (batch_id,)).fetchone()
             if row is None:
                 raise KeyError(f"batch {batch_id} not found")
-            counts = {r["state"]: r["c"] for r in conn.execute(
-                "SELECT state, COUNT(*) c FROM files WHERE batch_id=? GROUP BY state",
-                (batch_id,)).fetchall()}
-            total = sum(counts.values())
-            done = counts.get(FileState.DONE.value, 0)
-            verified = counts.get(FileState.VERIFIED.value, 0) + done
-            dead = counts.get(FileState.DEAD.value, 0)
-            uploaded = (counts.get(FileState.UPLOADED.value, 0)
-                        + counts.get(FileState.VERIFYING.value, 0) + verified)
-            failed = counts.get(FileState.FAILED.value, 0)
-            settled = verified + dead  # files that will not change without a retry
-            conn.execute(
-                "UPDATE batches SET copied_count=?, verified_count=?, failed_count=?, "
-                "deleted_count=? WHERE id=?",
-                (uploaded, verified, dead, done, batch_id),
-            )
-            state = BatchState(row["state"])
-            # Once every file in a running batch has settled (verified or dead),
-            # advance to awaiting-delete-approval so the user can review.
-            if state == BatchState.RUNNING and total > 0 and settled >= total:
-                conn.execute(
-                    "UPDATE batches SET state=? WHERE id=?",
-                    (BatchState.AWAITING_DELETE_APPROVAL.value, batch_id))
-                _insert_event(conn, run_id=row["run_id"], file_id=None,
-                              batch_id=batch_id, kind="batch_state_change",
-                              frm=state.value,
-                              to=BatchState.AWAITING_DELETE_APPROVAL.value, detail=None)
+            _recompute_batch(conn, batch_id, row["run_id"])
             return _row_to_batch(conn.execute(
                 "SELECT * FROM batches WHERE id=?", (batch_id,)).fetchone())
 
@@ -786,6 +822,40 @@ from filemig.domain.states import IN_PROGRESS_STATES as _IN_PROGRESS  # noqa: E4
 def utcnow_iso_in(seconds: float) -> str:
     from datetime import datetime, timezone
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
+def _recompute_batch(conn: sqlite3.Connection, batch_id: int, run_id: int) -> None:
+    """Recompute a batch's counters and advance running -> awaiting-delete once
+    every file has settled (verified, dead, or skipped). Runs inside a txn."""
+    counts = {r["state"]: r["c"] for r in conn.execute(
+        "SELECT state, COUNT(*) c FROM files WHERE batch_id=? GROUP BY state",
+        (batch_id,)).fetchall()}
+    total = sum(counts.values())
+    done = counts.get(FileState.DONE.value, 0)
+    verified = counts.get(FileState.VERIFIED.value, 0) + done
+    dead = counts.get(FileState.DEAD.value, 0)
+    skipped = counts.get(FileState.SKIPPED.value, 0)
+    uploaded = (counts.get(FileState.UPLOADED.value, 0)
+                + counts.get(FileState.VERIFYING.value, 0) + verified)
+    settled = verified + dead + skipped
+    conn.execute(
+        "UPDATE batches SET copied_count=?, verified_count=?, failed_count=?, "
+        "deleted_count=? WHERE id=?",
+        (uploaded, verified, dead, done, batch_id))
+    state_row = conn.execute("SELECT state FROM batches WHERE id=?",
+                             (batch_id,)).fetchone()
+    if state_row and state_row["state"] == BatchState.RUNNING.value \
+            and total > 0 and settled >= total:
+        conn.execute("UPDATE batches SET state=? WHERE id=?",
+                     (BatchState.AWAITING_DELETE_APPROVAL.value, batch_id))
+        _insert_event(conn, run_id=run_id, file_id=None, batch_id=batch_id,
+                      kind="batch_state_change", frm=BatchState.RUNNING.value,
+                      to=BatchState.AWAITING_DELETE_APPROVAL.value, detail=None)
+
+
+def _maybe_settle_batch(conn: sqlite3.Connection, batch_id: int, run_id: int) -> None:
+    """Alias used by bulk operations (skip) to advance a batch if now settled."""
+    _recompute_batch(conn, batch_id, run_id)
 
 
 def _insert_event(conn: sqlite3.Connection, *, run_id: int | None,

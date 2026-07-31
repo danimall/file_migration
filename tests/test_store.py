@@ -187,6 +187,57 @@ async def test_resume_batch_retries_dead_and_stragglers(store: Store):
     assert (await store.get_batch(batch.id)).state == BatchState.RUNNING
 
 
+async def test_skip_files_matching_excludes_pending_only(store: Store):
+    run = await store.create_run("u", "root")
+    venv1 = await _seed_file(store, run.id, dbx_id="id:1", path="/python/venv/a.py")
+    venv2 = await _seed_file(store, run.id, dbx_id="id:2", path="/python/venv/b.pyc")
+    real = await _seed_file(store, run.id, dbx_id="id:3", path="/pictures/x.jpg")
+    batch = await store.create_batch(run.id, [venv1, venv2, real], 3)
+    await store.transition_batch(batch.id, BatchState.COPY_APPROVED,
+                                 fields={"copy_approved_at": utcnow_iso_in(0)})
+    await store.transition_batch(batch.id, BatchState.RUNNING, requeue_files=True)
+    # Put one venv file mid-flight (downloading) — it must NOT be skipped.
+    await store.claim_next_file(run.id, "w", order="fifo")  # claims venv1
+    summary = await store.skip_files_matching(run.id, ["%/venv/%"])
+    assert summary["skipped"] == 1  # only venv2 (queued); venv1 is in-flight
+    assert (await store.get_file(venv2)).state == FileState.SKIPPED
+    assert (await store.get_file(venv1)).state == FileState.DOWNLOADING  # untouched
+    assert (await store.get_file(real)).state == FileState.QUEUED  # not matched
+
+
+async def test_skipped_files_let_batch_settle(store: Store):
+    run = await store.create_run("u", "root")
+    a = await _seed_file(store, run.id, dbx_id="id:a", path="/venv/a.py")
+    b = await _seed_file(store, run.id, dbx_id="id:b", path="/keep/b.jpg")
+    batch = await store.create_batch(run.id, [a, b], 2)
+    await store.transition_batch(batch.id, BatchState.COPY_APPROVED,
+                                 fields={"copy_approved_at": utcnow_iso_in(0)})
+    await store.transition_batch(batch.id, BatchState.RUNNING, requeue_files=True)
+    await store.skip_files_matching(run.id, ["%/venv/%"])
+    # Verify the kept file; batch should then settle (skipped + verified == all).
+    for s in [FileState.DOWNLOADING, FileState.DOWNLOADED, FileState.UPLOADING,
+              FileState.UPLOADED, FileState.VERIFYING, FileState.VERIFIED]:
+        await store.transition_file(b, s)
+    bat = await store.refresh_batch_counters(batch.id)
+    assert bat.state == BatchState.AWAITING_DELETE_APPROVAL
+
+
+async def test_claim_order_largest_first(store: Store):
+    run = await store.create_run("u", "root")
+    small = await _seed_file(store, run.id, dbx_id="id:s", path="/s", size=10)
+    big = await _seed_file(store, run.id, dbx_id="id:b", path="/b", size=10_000)
+    mid = await _seed_file(store, run.id, dbx_id="id:m", path="/m", size=500)
+    batch = await store.create_batch(run.id, [small, big, mid], 10510)
+    await store.transition_batch(batch.id, BatchState.COPY_APPROVED,
+                                 fields={"copy_approved_at": utcnow_iso_in(0)})
+    await store.transition_batch(batch.id, BatchState.RUNNING, requeue_files=True)
+    # Largest-first: big, then mid, then small.
+    c1 = await store.claim_next_file(run.id, "w", order="largest")
+    c2 = await store.claim_next_file(run.id, "w", order="largest")
+    c3 = await store.claim_next_file(run.id, "w", order="largest")
+    assert [c1.id, c2.id, c3.id] == [big, mid, small]
+
+
 async def test_resume_batch_noop_when_all_verified(store: Store):
     run = await store.create_run("u", "root")
     fid = await _seed_file(store, run.id)
